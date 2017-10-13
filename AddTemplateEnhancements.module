@@ -1,0 +1,296 @@
+<?php
+
+/**
+ *
+ * Add Template Enhancements
+ *
+ * @author Robin Sallis
+ *
+ * ProcessWire 3.x
+ * Copyright (C) 2011 by Ryan Cramer
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ *
+ * http://www.processwire.com
+ * http://www.ryancramer.com
+ *
+ */
+
+class AddTemplateEnhancements extends WireData implements Module, ConfigurableModule {
+
+	/**
+	 * Module information
+	 */
+	public static function getModuleInfo() {
+		return array(
+			'title' => "Add Template Enhancements",
+			'version' => 1,
+			'author' => 'Robin Sallis',
+			'href' => 'https://github.com/Toutouwai/AddTemplateEnhancements',
+			'summary' => 'Some efficiency enhancements when adding or cloning templates via admin.',
+			'icon' => 'cubes',
+			'autoload' => "template=admin",
+		);
+	}
+
+	protected $separators = array();
+
+	/**
+	 * Construct
+	 */
+	public function __construct() {
+		// Default config
+		$this->derive_label = 1;
+		$this->capitalisation = 'sentence_case';
+		$this->replace_underscores = 1;
+		$this->replace_hyphens = 0;
+		$this->edit_after_add = 1;
+		$this->copy_context_on_clone = 1;
+		$this->copy_context_on_duplicate = 1;
+	}
+
+	/**
+	 * Ready
+	 */
+	public function ready() {
+
+		if($this->replace_underscores) $this->separators[] = '_';
+		if($this->replace_hyphens) $this->separators[] = '-';
+
+		if($this->derive_label === 1) {
+			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'deriveLabelOnAdd');
+		}
+		if($this->edit_after_add === 1) {
+			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'editAfterAdd');
+		}
+		if($this->copy_context_on_clone === 1) {
+			$this->addHookAfter('Templates::clone', $this, 'copyContextOnClone');
+		}
+		if($this->copy_context_on_duplicate === 1) {
+			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'copyContextOnDuplicate');
+		}
+
+	}
+
+	/**
+	 * Automatically derive template label from template name when new template is added in admin
+	 *
+	 * @param HookEvent $event
+	 */
+	public function deriveLabelOnAdd(HookEvent $event) {
+		$this->addHookBefore('Templates::save', function(HookEvent $event) {
+			/* @var Template $new_tpl */
+			$new_tpl = $event->arguments(0);
+			$label = $new_tpl->name;
+			$label = $this->separatorsToSpaces($label, $this->separators);
+			if($this->capitalisation !== 'no_change') $label = $this->capitalise($label, $this->capitalisation);
+			$new_tpl->label = $label;
+		});
+	}
+
+	/**
+	 * Capitalise a string
+	 *
+	 * @param string $str
+	 * @param string $format The format of capitalisation: sentence_case or title_case
+	 * @return string
+	 */
+	public function capitalise($str, $format) {
+		if($format === 'sentence_case') $function = 'ucfirst';
+		if($format === 'title_case') $function = 'ucwords';
+		if(!isset($function)) return $str;
+		return $function($str);
+	}
+
+	/**
+	 * Convert separators in a string to spaces
+	 *
+	 * @param string $str
+	 * @param array $separators Characters to replace with a space
+	 * @return string
+	 */
+	public function separatorsToSpaces($str, $separators = array()) {
+		if(empty($separators)) return $str;
+		return str_replace($separators, ' ', $str);
+	}
+
+	/**
+	 * If only one new template is being added, edit this template immediately afterwards
+	 *
+	 * @param HookEvent $event
+	 */
+	public function editAfterAdd(HookEvent $event) {
+		$new_templates = $this->input->post('templates');
+		$template_name = trim($this->input->post('template_name'));
+		if(strpos($template_name, ' ') !== false) return;
+		if($template_name) $new_templates[] = $template_name;
+		if(count($new_templates) !== 1) return;
+		$new_template_name = $this->sanitizer->name($new_templates[0]);
+		if($new_template_name) {
+			$this->addHookBefore('Session::redirect', function(HookEvent $event) use ($new_template_name) {
+				$tpl = $this->templates->get($new_template_name);
+				$event->arguments(0, "./edit?id={$tpl->id}");
+			});
+		}
+	}
+
+	/**
+	 * Copy field contexts when a template is cloned
+	 *
+	 * @param HookEvent $event
+	 */
+	public function copyContextOnClone(HookEvent $event) {
+
+		/* @var Template $tpl */
+		$tpl = $event->arguments(0);
+		$new_tpl_name = $event->arguments(1);
+		$contexts = $this->getContexts($tpl->fieldgroup);
+		/* @var Template $new_tpl */
+		$new_tpl = $this->templates->get($new_tpl_name);
+		$this->setContexts($new_tpl->fieldgroup, $contexts);
+
+		// Derive label from name?
+		if($this->derive_label === 1) {
+			$label = $new_tpl_name;
+			$label = $this->separatorsToSpaces($label, $this->separators);
+			if($this->capitalisation !== 'no_change') $label = $this->capitalise($label, $this->capitalisation);
+			$new_tpl->label = $label;
+			$new_tpl->save();
+		}
+
+	}
+
+	/**
+	 * Copy field contexts when a new template is added in admin with the "Duplicate fields used by another template" option
+	 *
+	 * @param HookEvent $event
+	 */
+	public function copyContextOnDuplicate(HookEvent $event) {
+		$fg_name = $this->sanitizer->name($this->input->post('import_fieldgroup'));
+		if(!$fg_name) return;
+		/* @var Fieldgroup $import_fg */
+		$import_fg = $this->fieldgroups->get($fg_name);
+		if(!$import_fg) return;
+		$contexts = $this->getContexts($import_fg);
+		if(count($contexts)) {
+			$this->addHookAfter('Fieldgroups::save', function(HookEvent $event) use ($contexts) {
+				/* @var Fieldgroup $new_fg */
+				$new_fg = $event->arguments(0);
+				$this->setContexts($new_fg, $contexts);
+			});
+		}
+	}
+
+	/**
+	 * Get field contexts for a Fieldgroup
+	 *
+	 * @param Fieldgroup $fieldgroup
+	 * @return array Array of field context changes
+	 */
+	public function getContexts($fieldgroup) {
+		$contexts = array();
+		foreach($fieldgroup as $field) {
+			$context = $fieldgroup->getFieldContextArray($field->id);
+			if($context) $contexts[$field->name] = $context;
+		}
+		return $contexts;
+	}
+
+	/**
+	 * Set field contexts for a Fieldgroup
+	 *
+	 * @param Fieldgroup $fieldgroup
+	 */
+	public function setContexts($fieldgroup, $contexts = array()) {
+		foreach($fieldgroup as $field) {
+			if(isset($contexts[$field->name])) $fieldgroup->setFieldContextArray($field->id, $contexts[$field->name]);
+		}
+		$fieldgroup->saveContext();
+	}
+
+
+	/**
+	 * Config inputfields
+	 *
+	 * @param InputfieldWrapper $inputfields
+	 */
+	public function getModuleConfigInputfields($inputfields) {
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'derive_label';
+		$f->name = $f_name;
+		$f->label = $this->_('Derive template label from name');
+		$f->description = $this->_('Automatically derive a template label from the template name when new templates are added.');
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$inputfields->add($f);
+
+		/* @var InputfieldFieldset $fs */
+		$fs = $this->modules->InputfieldFieldset;
+		$fs->name = 'label_options';
+		$fs->label = $this->_('Label options');
+		$fs->showIf = 'derive_label=1';
+		$inputfields->add($fs);
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'replace_underscores';
+		$f->name = $f_name;
+		$f->label = $this->_('Replace underscores with spaces');
+		$f->columnWidth = 30;
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$fs->add($f);
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'replace_hyphens';
+		$f->name = $f_name;
+		$f->label = $this->_('Replace hyphens with spaces');
+		$f->columnWidth = 30;
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$fs->add($f);
+
+		/* @var InputfieldRadios $f */
+		$f = $this->modules->InputfieldRadios;
+		$f_name = 'capitalisation';
+		$f->name = $f_name;
+		$f->label = $this->_('Capitalisation');
+		$f->addOption('sentence_case', $this->_('Sentence case'));
+		$f->addOption('title_case', $this->_('Title case'));
+		$f->addOption('no_change', $this->_('No change'));
+		$f->optionColumns = 1;
+		$f->columnWidth = 40;
+		$f->value = $this->$f_name;
+		$fs->add($f);
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'edit_after_add';
+		$f->name = $f_name;
+		$f->label = $this->_('Edit template after add');
+		$f->description = $this->_('When adding only a single template, open that template for editing after it is added.');
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$inputfields->add($f);
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'copy_context_on_clone';
+		$f->name = $f_name;
+		$f->label = $this->_('Copy field contexts when cloning');
+		$f->description = $this->_('When cloning a template, copy field contexts to the new template.');
+		$f->columnWidth = 50;
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$inputfields->add($f);
+
+		/* @var InputfieldCheckbox $f */
+		$f = $this->modules->InputfieldCheckbox;
+		$f_name = 'copy_context_on_duplicate';
+		$f->name = $f_name;
+		$f->label = $this->_('Copy field contexts when duplicating fields');
+		$f->description = $this->_('When adding a new template with the "Duplicate fields used by another template" option, copy field contexts to the new template.');
+		$f->columnWidth = 50;
+		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$inputfields->add($f);
+
+	}
+
+}
