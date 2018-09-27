@@ -23,12 +23,12 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	public static function getModuleInfo() {
 		return array(
 			'title' => "Add Template Enhancements",
-			'version' => 1,
+			'summary' => 'Some efficiency enhancements when adding or cloning a template.',
+			'version' => '0.1.1',
 			'author' => 'Robin Sallis',
 			'href' => 'https://github.com/Toutouwai/AddTemplateEnhancements',
-			'summary' => 'Some efficiency enhancements when adding or cloning templates via admin.',
 			'icon' => 'cubes',
-			'autoload' => "template=admin",
+			'autoload' => true,
 		);
 	}
 
@@ -39,7 +39,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 */
 	public function __construct() {
 		// Default config
-		$this->derive_label = 1;
+		$this->derive_label_options = 'admin';
 		$this->capitalisation = 'sentence_case';
 		$this->replace_underscores = 1;
 		$this->replace_hyphens = 0;
@@ -49,15 +49,23 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	}
 
 	/**
+	 * Init
+	 */
+	public function init() {
+		if($this->replace_underscores) $this->separators[] = '_';
+		if($this->replace_hyphens) $this->separators[] = '-';
+		if($this->derive_label_options === 'admin_api') {
+			$this->addHookBefore('Templates::save', $this, 'deriveLabelOnAdd');
+		}
+	}
+
+	/**
 	 * Ready
 	 */
 	public function ready() {
 
-		if($this->replace_underscores) $this->separators[] = '_';
-		if($this->replace_hyphens) $this->separators[] = '-';
-
-		if($this->derive_label === 1) {
-			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'deriveLabelOnAdd');
+		if($this->derive_label_options === 'admin') {
+			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'adminAdd');
 		}
 		if($this->edit_after_add === 1) {
 			$this->addHookBefore('ProcessTemplate::executeAdd', $this, 'editAfterAdd');
@@ -72,19 +80,28 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	}
 
 	/**
-	 * Automatically derive template label from template name when new template is added in admin
+	 * Before template added in admin
 	 *
 	 * @param HookEvent $event
 	 */
-	public function deriveLabelOnAdd(HookEvent $event) {
-		$this->addHookBefore('Templates::save', function(HookEvent $event) {
-			/* @var Template $new_tpl */
-			$new_tpl = $event->arguments(0);
-			$label = $new_tpl->name;
-			$label = $this->separatorsToSpaces($label, $this->separators);
-			if($this->capitalisation !== 'no_change') $label = $this->capitalise($label, $this->capitalisation);
-			$new_tpl->label = $label;
-		});
+	protected function adminAdd(HookEvent $event) {
+		$this->addHookBefore('Templates::save', $this, 'deriveLabelOnAdd');
+	}
+
+	/**
+	 * Automatically derive template label from template name when new template is added
+	 *
+	 * @param HookEvent $event
+	 */
+	protected function deriveLabelOnAdd(HookEvent $event) {
+		/* @var Template $new_tpl */
+		$new_tpl = $event->arguments(0);
+		// Only if this is a new template
+		if($new_tpl->id > 0) return;
+		$label = $new_tpl->name;
+		$label = $this->separatorsToSpaces($label, $this->separators);
+		if($this->capitalisation !== 'no_change') $label = $this->capitalise($label, $this->capitalisation);
+		$new_tpl->label = $label;
 	}
 
 	/**
@@ -118,7 +135,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 *
 	 * @param HookEvent $event
 	 */
-	public function editAfterAdd(HookEvent $event) {
+	protected function editAfterAdd(HookEvent $event) {
 		$new_templates = $this->input->post('templates');
 		$template_name = trim($this->input->post('template_name'));
 		if(strpos($template_name, ' ') !== false) return;
@@ -138,7 +155,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 *
 	 * @param HookEvent $event
 	 */
-	public function copyContextOnClone(HookEvent $event) {
+	protected function copyContextOnClone(HookEvent $event) {
 
 		/* @var Template $tpl */
 		$tpl = $event->arguments(0);
@@ -149,7 +166,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		$this->setContexts($new_tpl->fieldgroup, $contexts);
 
 		// Derive label from name?
-		if($this->derive_label === 1) {
+		if($this->derive_label_options === 'admin' || $this->derive_label_options === 'admin_api') {
 			$label = $new_tpl_name;
 			$label = $this->separatorsToSpaces($label, $this->separators);
 			if($this->capitalisation !== 'no_change') $label = $this->capitalise($label, $this->capitalisation);
@@ -164,7 +181,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 *
 	 * @param HookEvent $event
 	 */
-	public function copyContextOnDuplicate(HookEvent $event) {
+	protected function copyContextOnDuplicate(HookEvent $event) {
 		$fg_name = $this->sanitizer->name($this->input->post('import_fieldgroup'));
 		if(!$fg_name) return;
 		/* @var Fieldgroup $import_fg */
@@ -186,7 +203,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 * @param Fieldgroup $fieldgroup
 	 * @return array Array of field context changes
 	 */
-	public function getContexts($fieldgroup) {
+	protected function getContexts($fieldgroup) {
 		$contexts = array();
 		foreach($fieldgroup as $field) {
 			$context = $fieldgroup->getFieldContextArray($field->id);
@@ -199,14 +216,14 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 * Set field contexts for a Fieldgroup
 	 *
 	 * @param Fieldgroup $fieldgroup
+	 * @param array $contexts
 	 */
-	public function setContexts($fieldgroup, $contexts = array()) {
+	protected function setContexts($fieldgroup, $contexts = array()) {
 		foreach($fieldgroup as $field) {
 			if(isset($contexts[$field->name])) $fieldgroup->setFieldContextArray($field->id, $contexts[$field->name]);
 		}
 		$fieldgroup->saveContext();
 	}
-
 
 	/**
 	 * Config inputfields
@@ -216,19 +233,23 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	public function getModuleConfigInputfields($inputfields) {
 
 		/* @var InputfieldCheckbox $f */
-		$f = $this->modules->InputfieldCheckbox;
-		$f_name = 'derive_label';
+		$f = $this->modules->InputfieldRadios;
+		$f_name = 'derive_label_options';
 		$f->name = $f_name;
-		$f->label = $this->_('Derive template label from name');
-		$f->description = $this->_('Automatically derive a template label from the template name when new templates are added.');
-		$f->checked = $this->$f_name === 1 ? 'checked' : '';
+		$f->label = $this->_('Derive label from name when new template added');
+		$f->options = array(
+			'admin' => $this->_('When template added in admin'),
+			'admin_api' => $this->_('When template added in admin or via API'),
+			'no' => $this->_("Don't derive template label from name"),
+		);
+		$f->value = $this->$f_name;
 		$inputfields->add($f);
 
 		/* @var InputfieldFieldset $fs */
 		$fs = $this->modules->InputfieldFieldset;
 		$fs->name = 'label_options';
 		$fs->label = $this->_('Label options');
-		$fs->showIf = 'derive_label=1';
+		$fs->showIf = 'derive_label_options=admin|admin_api';
 		$inputfields->add($fs);
 
 		/* @var InputfieldCheckbox $f */
@@ -254,9 +275,11 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		$f_name = 'capitalisation';
 		$f->name = $f_name;
 		$f->label = $this->_('Capitalisation');
-		$f->addOption('sentence_case', $this->_('Sentence case'));
-		$f->addOption('title_case', $this->_('Title case'));
-		$f->addOption('no_change', $this->_('No change'));
+		$f->options = array(
+			'sentence_case' => $this->_('Sentence case'),
+			'title_case' => $this->_('Title case'),
+			'no_change' => $this->_('No change'),
+		);
 		$f->optionColumns = 1;
 		$f->columnWidth = 40;
 		$f->value = $this->$f_name;
@@ -291,6 +314,34 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		$f->checked = $this->$f_name === 1 ? 'checked' : '';
 		$inputfields->add($f);
 
+	}
+
+	/**
+	 * On module upgrade
+	 *
+	 * @param int|string $fromVersion
+	 * @param int|string $toVersion
+	 */
+	public function ___upgrade($fromVersion, $toVersion) {
+		// Convert integer version to semantic version
+		if(is_int($fromVersion)) $fromVersion = '0.0.' . $fromVersion;
+
+		// Upgrade from < v0.1.1
+		if(version_compare($fromVersion, '0.1.1', '<')) {
+			// Get existing config
+			$cfg = $this->modules->getModuleConfigData($this->className());
+			// convert roles field value to array
+			if(isset($cfg['derive_label'])) {
+				if($cfg['derive_label'] === 1) {
+					$cfg['derive_label_options'] = 'admin';
+				} else {
+					$cfg['derive_label_options'] = 'no';
+				}
+				unset($cfg['derive_label']);
+				// Save config
+				$this->modules->saveModuleConfigData($this->className, $cfg);
+			}
+		}
 	}
 
 }
