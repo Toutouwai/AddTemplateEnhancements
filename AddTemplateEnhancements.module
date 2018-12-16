@@ -24,7 +24,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		return array(
 			'title' => "Add Template Enhancements",
 			'summary' => 'Some efficiency enhancements when adding or cloning a template.',
-			'version' => '0.1.1',
+			'version' => '0.1.2',
 			'author' => 'Robin Sallis',
 			'href' => 'https://github.com/Toutouwai/AddTemplateEnhancements',
 			'icon' => 'cubes',
@@ -257,7 +257,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		$f_name = 'replace_underscores';
 		$f->name = $f_name;
 		$f->label = $this->_('Replace underscores with spaces');
-		$f->columnWidth = 30;
+		$f->columnWidth = 33;
 		$f->checked = $this->$f_name === 1 ? 'checked' : '';
 		$fs->add($f);
 
@@ -266,7 +266,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		$f_name = 'replace_hyphens';
 		$f->name = $f_name;
 		$f->label = $this->_('Replace hyphens with spaces');
-		$f->columnWidth = 30;
+		$f->columnWidth = 33;
 		$f->checked = $this->$f_name === 1 ? 'checked' : '';
 		$fs->add($f);
 
@@ -281,7 +281,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 			'no_change' => $this->_('No change'),
 		);
 		$f->optionColumns = 1;
-		$f->columnWidth = 40;
+		$f->columnWidth = 34;
 		$f->value = $this->$f_name;
 		$fs->add($f);
 
