@@ -24,7 +24,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 		return array(
 			'title' => "Add Template Enhancements",
 			'summary' => 'Some efficiency enhancements when adding or cloning a template.',
-			'version' => '0.1.2',
+			'version' => '0.1.3',
 			'author' => 'Robin Sallis',
 			'href' => 'https://github.com/Toutouwai/AddTemplateEnhancements',
 			'icon' => 'cubes',
@@ -137,6 +137,7 @@ class AddTemplateEnhancements extends WireData implements Module, ConfigurableMo
 	 */
 	protected function editAfterAdd(HookEvent $event) {
 		$new_templates = $this->input->post('templates');
+		if(!$new_templates) return;
 		$template_name = trim($this->input->post('template_name'));
 		if(strpos($template_name, ' ') !== false) return;
 		if($template_name) $new_templates[] = $template_name;
